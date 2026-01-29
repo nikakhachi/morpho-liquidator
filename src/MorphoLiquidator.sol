@@ -36,7 +36,7 @@ contract MorphoLiquidator {
             type(uint256).max
         );
 
-        (uint256 seizedAssets, ) = morpho.liquidate(
+        (uint256 seizedCollateral, ) = morpho.liquidate(
             _marketParams,
             _borrower,
             0,
@@ -44,7 +44,10 @@ contract MorphoLiquidator {
             ""
         );
 
-        IERC20(_marketParams.loanToken).transfer(msg.sender, seizedAssets);
+        IERC20(_marketParams.collateralToken).transfer(
+            msg.sender,
+            seizedCollateral
+        );
     }
 
     function maxDebtToRepay(
