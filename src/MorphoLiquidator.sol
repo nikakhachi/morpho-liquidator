@@ -4,18 +4,43 @@ pragma solidity ^0.8.13;
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IMorpho, MarketParams, IOracle} from "./IMorpho.sol";
 
+/// @title MorphoLiquidator
+/// @notice A helper contract for liquidating undercollateralized positions on Morpho Blue
+/// @dev Simplifies the liquidation process by accepting debt amount in assets instead of shares
 contract MorphoLiquidator {
-    IMorpho morpho;
+    error ZeroAmount();
+    error SlippageExceeded();
+    error TransferFailed();
+
+    event Liquidation(
+        bytes32 indexed marketId,
+        address indexed borrower,
+        address indexed liquidator,
+        uint256 repaidAssets,
+        uint256 seizedCollateral
+    );
+
+    IMorpho public immutable MORPHO;
 
     constructor(address _morpho) {
-        morpho = IMorpho(_morpho);
+        MORPHO = IMorpho(_morpho);
     }
 
+    /// @notice Liquidate an undercollateralized position
+    /// @param _marketParams The market parameters identifying the Morpho market
+    /// @param _borrower The address of the borrower to liquidate
+    /// @param _debtToRepay The amount of debt (in loan token assets) to repay
+    /// @param _minCollateralOut Minimum collateral to receive (slippage protection)
+    /// @return seizedCollateral The amount of collateral seized
+    /// @return repaidAssets The amount of loan assets actually repaid
     function liquidate(
         MarketParams memory _marketParams,
         address _borrower,
-        uint256 _debtToRepay
-    ) external {
+        uint256 _debtToRepay,
+        uint256 _minCollateralOut
+    ) external returns (uint256 seizedCollateral, uint256 repaidAssets) {
+        if (_debtToRepay == 0) revert ZeroAmount();
+
         (
             ,
             ,
@@ -31,12 +56,10 @@ contract MorphoLiquidator {
             address(this),
             _debtToRepay
         );
-        IERC20(_marketParams.loanToken).approve(
-            address(morpho),
-            type(uint256).max
-        );
 
-        (uint256 seizedCollateral, ) = morpho.liquidate(
+        IERC20(_marketParams.loanToken).approve(address(MORPHO), _debtToRepay);
+
+        (seizedCollateral, ) = MORPHO.liquidate(
             _marketParams,
             _borrower,
             0,
@@ -44,17 +67,34 @@ contract MorphoLiquidator {
             ""
         );
 
+        if (seizedCollateral < _minCollateralOut) revert SlippageExceeded();
+
         IERC20(_marketParams.collateralToken).transfer(
             msg.sender,
             seizedCollateral
         );
+
+        repaidAssets = _debtToRepay;
+
+        emit Liquidation(
+            _marketId(_marketParams),
+            _borrower,
+            msg.sender,
+            _debtToRepay,
+            seizedCollateral
+        );
     }
 
+    /// @notice Calculate the maximum debt that can be repaid for a liquidation
+    /// @param _marketParams The market parameters
+    /// @param _borrower The borrower address
+    /// @param _liquidationPenalty The liquidation penalty (e.g., 0.0261e18 for 2.61%)
+    /// @return debtAssetsToLiquidate The maximum debt in assets that can be liquidated
     function maxDebtToRepay(
         MarketParams memory _marketParams,
         address _borrower,
-        uint256 _liquidationPenalty // if 2.61%, pass 0.0261e18
-    ) internal view returns (uint256 debtAssetsToLiquidate) {
+        uint256 _liquidationPenalty
+    ) external view returns (uint256 debtAssetsToLiquidate) {
         (
             uint128 borrowerDebtShares,
             uint128 borrowerCollateral,
@@ -95,11 +135,11 @@ contract MorphoLiquidator {
     {
         bytes32 marketId = _marketId(_marketParams);
 
-        (, borrowerDebtShares, borrowerCollateral) = morpho.position(
+        (, borrowerDebtShares, borrowerCollateral) = MORPHO.position(
             marketId,
             _borrower
         );
-        (, , totalBorrowAssets, totalBorrowShares, , ) = morpho.market(
+        (, , totalBorrowAssets, totalBorrowShares, , ) = MORPHO.market(
             marketId
         );
     }
