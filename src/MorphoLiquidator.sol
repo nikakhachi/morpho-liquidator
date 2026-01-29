@@ -17,14 +17,14 @@ contract MorphoLiquidator {
         uint256 _debtToRepay
     ) external {
         (
-            uint128 borrowerDebtShares,
             ,
             ,
+            uint128 totalBorrowAssets,
             uint128 totalBorrowShares
         ) = _positionData(_marketParams, _borrower);
 
-        uint256 sharesToRepay = (_debtToRepay * uint256(borrowerDebtShares)) /
-            uint256(totalBorrowShares);
+        uint256 sharesToRepay = (_debtToRepay * uint256(totalBorrowShares)) /
+            uint256(totalBorrowAssets);
 
         IERC20(_marketParams.loanToken).transferFrom(
             msg.sender,
