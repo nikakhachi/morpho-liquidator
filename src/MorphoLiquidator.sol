@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import {IERC20} from "forge-std/interfaces/IERC20.sol";
-import {IMorpho, MarketParams, IOracle} from "./IMorpho.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {IMorpho, MarketParams, IOracle} from "./IMorpho.sol";
 
 contract MorphoLiquidator is AccessControl {
+    using SafeERC20 for IERC20;
+
     bytes32 public constant LIQUIDATOR = keccak256("LIQUIDATOR");
 
     IMorpho public immutable MORPHO;
@@ -28,6 +31,8 @@ contract MorphoLiquidator is AccessControl {
         uint256 _debtToRepay,
         uint256 _minCollateralOut
     ) external onlyRole(LIQUIDATOR) returns (uint256 seizedCollateral) {
+        MORPHO.accrueInterest(_marketParams);
+
         (
             ,
             ,
@@ -38,13 +43,16 @@ contract MorphoLiquidator is AccessControl {
         uint256 sharesToRepay = (_debtToRepay * uint256(totalBorrowShares)) /
             uint256(totalBorrowAssets);
 
-        IERC20(_marketParams.loanToken).transferFrom(
+        IERC20(_marketParams.loanToken).safeTransferFrom(
             msg.sender,
             address(this),
             _debtToRepay
         );
 
-        IERC20(_marketParams.loanToken).approve(address(MORPHO), _debtToRepay);
+        IERC20(_marketParams.loanToken).forceApprove(
+            address(MORPHO),
+            _debtToRepay
+        );
 
         (seizedCollateral, ) = MORPHO.liquidate(
             _marketParams,
@@ -56,7 +64,7 @@ contract MorphoLiquidator is AccessControl {
 
         require(seizedCollateral >= _minCollateralOut, "Slippage exceeded");
 
-        IERC20(_marketParams.collateralToken).transfer(
+        IERC20(_marketParams.collateralToken).safeTransfer(
             msg.sender,
             seizedCollateral
         );
@@ -136,7 +144,7 @@ contract MorphoLiquidator is AccessControl {
     }
 
     function recover(address _token) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        IERC20(_token).transfer(
+        IERC20(_token).safeTransfer(
             msg.sender,
             IERC20(_token).balanceOf(address(this))
         );
