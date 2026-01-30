@@ -3,11 +3,15 @@ pragma solidity ^0.8.13;
 
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IMorpho, MarketParams, IOracle} from "./IMorpho.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-contract MorphoLiquidator {
+contract MorphoLiquidator is AccessControl {
+    bytes32 public constant LIQUIDATOR = keccak256("LIQUIDATOR");
+
     IMorpho public immutable MORPHO;
 
     constructor(address _morpho) {
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         MORPHO = IMorpho(_morpho);
     }
 
@@ -23,7 +27,7 @@ contract MorphoLiquidator {
         address _borrower,
         uint256 _debtToRepay,
         uint256 _minCollateralOut
-    ) external returns (uint256 seizedCollateral) {
+    ) external onlyRole(LIQUIDATOR) returns (uint256 seizedCollateral) {
         (
             ,
             ,
@@ -129,5 +133,12 @@ contract MorphoLiquidator {
                     _marketParams.lltv
                 )
             );
+    }
+
+    function recover(address _token) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        IERC20(_token).transfer(
+            msg.sender,
+            IERC20(_token).balanceOf(address(this))
+        );
     }
 }

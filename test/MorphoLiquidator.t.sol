@@ -158,6 +158,7 @@ contract MorphoLiquidationTest is Test {
             uint256(totalBorrowShares);
 
         MorphoLiquidator liquidator = new MorphoLiquidator(MORPHO);
+        liquidator.grantRole(liquidator.LIQUIDATOR(), address(this));
 
         deal(marketParams.loanToken, address(this), 2_000_000e6);
         IERC20(marketParams.loanToken).approve(
@@ -215,6 +216,7 @@ contract MorphoLiquidatorExtendedTest is Test {
         vm.createSelectFork(KATANA_RPC, 22953982);
         morpho = IMorpho(MORPHO);
         liquidator = new MorphoLiquidator(MORPHO);
+        liquidator.grantRole(liquidator.LIQUIDATOR(), address(this));
 
         marketParams = MarketParams({
             loanToken: VB_USDC,
@@ -682,61 +684,6 @@ contract MorphoLiquidatorExtendedTest is Test {
             debtToRepay,
             minCollateralOut
         );
-    }
-
-    // =========================================================================
-    //                          CALLER TESTS
-    // =========================================================================
-
-    function testLiquidate_DifferentCallers() public {
-        morpho.accrueInterest(marketParams);
-        (, uint128 borrowerDebtShares, uint128 borrowerCollateral) = morpho
-            .position(_marketId(), BORROWER);
-        (, , uint128 totalBorrowAssets, uint128 totalBorrowShares, , ) = morpho
-            .market(_marketId());
-
-        uint256 fakePrice = _makeUndercollateralized();
-
-        (uint256 maxDebtToRepay, ) = _calculateMaxDebtToRepay(
-            borrowerCollateral,
-            fakePrice,
-            totalBorrowAssets,
-            totalBorrowShares,
-            borrowerDebtShares
-        );
-
-        uint256 debtToRepay = maxDebtToRepay / 3;
-
-        // Caller 1
-        address caller1 = address(0xCAFE);
-        deal(marketParams.loanToken, caller1, debtToRepay * 2);
-        vm.startPrank(caller1);
-        IERC20(marketParams.loanToken).approve(
-            address(liquidator),
-            type(uint256).max
-        );
-        liquidator.liquidate(marketParams, BORROWER, debtToRepay, 0);
-        vm.stopPrank();
-
-        uint256 caller1Collateral = IERC20(WS_RUSD).balanceOf(caller1);
-        assertGt(caller1Collateral, 0, "Caller1 should receive collateral");
-
-        // Caller 2
-        address caller2 = address(0xBEEF);
-        deal(marketParams.loanToken, caller2, debtToRepay * 2);
-        vm.startPrank(caller2);
-        IERC20(marketParams.loanToken).approve(
-            address(liquidator),
-            type(uint256).max
-        );
-        liquidator.liquidate(marketParams, BORROWER, debtToRepay, 0);
-        vm.stopPrank();
-
-        uint256 caller2Collateral = IERC20(WS_RUSD).balanceOf(caller2);
-        assertGt(caller2Collateral, 0, "Caller2 should receive collateral");
-
-        console.log("Caller1 wsRUSD:", caller1Collateral);
-        console.log("Caller2 wsRUSD:", caller2Collateral);
     }
 
     // =========================================================================
