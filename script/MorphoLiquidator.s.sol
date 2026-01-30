@@ -2,17 +2,19 @@
 pragma solidity ^0.8.13;
 
 import {Script} from "forge-std/Script.sol";
-import {Counter} from "../src/Counter.sol";
+import {MorphoLiquidator} from "../src/MorphoLiquidator.sol";
+
+address constant MORPHO = 0x0000000000000000000000000000000000000000;
 
 contract CounterScript is Script {
-    Counter public counter;
+    MorphoLiquidator public liquidator;
 
     function setUp() public {}
 
     function run() public {
         vm.startBroadcast();
 
-        counter = new Counter();
+        liquidator = new MorphoLiquidator(MORPHO);
 
         vm.stopBroadcast();
     }
