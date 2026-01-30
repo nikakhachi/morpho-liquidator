@@ -980,6 +980,9 @@ contract MorphoLiquidatorExtendedTest is Test {
         MorphoLiquidator badLiquidator = new MorphoLiquidator(address(0));
         assertTrue(address(badLiquidator) != address(0), "Should deploy");
 
+        // Grant liquidator role to test
+        badLiquidator.grantRole(badLiquidator.LIQUIDATOR(), address(this));
+
         // Attempting to use it should fail
         _makeUndercollateralized();
         deal(marketParams.loanToken, address(this), 1000e6);
@@ -990,5 +993,286 @@ contract MorphoLiquidatorExtendedTest is Test {
 
         vm.expectRevert();
         badLiquidator.liquidate(marketParams, BORROWER, 100e6, 0);
+    }
+
+    // =========================================================================
+    //                          ACCESS CONTROL TESTS
+    // =========================================================================
+
+    function testAccessControl_LiquidatorRoleRequired() public {
+        // Create a new liquidator contract where we DON'T grant LIQUIDATOR role
+        MorphoLiquidator newLiquidator = new MorphoLiquidator(MORPHO);
+        // Note: NOT granting LIQUIDATOR role to address(this)
+
+        morpho.accrueInterest(marketParams);
+        _makeUndercollateralized();
+
+        deal(marketParams.loanToken, address(this), 1_000_000e6);
+        IERC20(marketParams.loanToken).approve(
+            address(newLiquidator),
+            type(uint256).max
+        );
+
+        // Should revert because caller doesn't have LIQUIDATOR role
+        vm.expectRevert();
+        newLiquidator.liquidate(marketParams, BORROWER, 1000e6, 0);
+    }
+
+    function testAccessControl_NonLiquidatorCannotLiquidate() public {
+        address unauthorized = address(0xBAD);
+
+        morpho.accrueInterest(marketParams);
+        _makeUndercollateralized();
+
+        deal(marketParams.loanToken, unauthorized, 1_000_000e6);
+
+        vm.startPrank(unauthorized);
+        IERC20(marketParams.loanToken).approve(
+            address(liquidator),
+            type(uint256).max
+        );
+
+        // Should revert because unauthorized doesn't have LIQUIDATOR role
+        vm.expectRevert();
+        liquidator.liquidate(marketParams, BORROWER, 1000e6, 0);
+        vm.stopPrank();
+    }
+
+    function testAccessControl_GrantLiquidatorRole() public {
+        address newLiquidator = address(0xCAFE);
+
+        // Initially, newLiquidator doesn't have the role
+        assertFalse(
+            liquidator.hasRole(liquidator.LIQUIDATOR(), newLiquidator),
+            "Should not have LIQUIDATOR role initially"
+        );
+
+        // Grant the role (this contract is admin)
+        liquidator.grantRole(liquidator.LIQUIDATOR(), newLiquidator);
+
+        // Now newLiquidator should have the role
+        assertTrue(
+            liquidator.hasRole(liquidator.LIQUIDATOR(), newLiquidator),
+            "Should have LIQUIDATOR role after grant"
+        );
+
+        // And should be able to liquidate
+        morpho.accrueInterest(marketParams);
+        _makeUndercollateralized();
+
+        deal(marketParams.loanToken, newLiquidator, 1_000_000e6);
+
+        vm.startPrank(newLiquidator);
+        IERC20(marketParams.loanToken).approve(
+            address(liquidator),
+            type(uint256).max
+        );
+        liquidator.liquidate(marketParams, BORROWER, 1000e6, 0);
+        vm.stopPrank();
+
+        // Verify collateral was received
+        uint256 collateralBalance = IERC20(WS_RUSD).balanceOf(newLiquidator);
+        assertGt(collateralBalance, 0, "New liquidator should have received collateral");
+    }
+
+    function testAccessControl_RevokeLiquidatorRole() public {
+        address revokedLiquidator = address(0xBEEF);
+
+        // Grant role first
+        liquidator.grantRole(liquidator.LIQUIDATOR(), revokedLiquidator);
+        assertTrue(
+            liquidator.hasRole(liquidator.LIQUIDATOR(), revokedLiquidator),
+            "Should have role"
+        );
+
+        // Revoke the role
+        liquidator.revokeRole(liquidator.LIQUIDATOR(), revokedLiquidator);
+        assertFalse(
+            liquidator.hasRole(liquidator.LIQUIDATOR(), revokedLiquidator),
+            "Should not have role after revoke"
+        );
+
+        // Now liquidation should fail
+        morpho.accrueInterest(marketParams);
+        _makeUndercollateralized();
+
+        deal(marketParams.loanToken, revokedLiquidator, 1_000_000e6);
+
+        vm.startPrank(revokedLiquidator);
+        IERC20(marketParams.loanToken).approve(
+            address(liquidator),
+            type(uint256).max
+        );
+        vm.expectRevert();
+        liquidator.liquidate(marketParams, BORROWER, 1000e6, 0);
+        vm.stopPrank();
+    }
+
+    function testAccessControl_AdminCannotLiquidateWithoutRole() public {
+        // Create a new liquidator where admin (this contract) doesn't have LIQUIDATOR role
+        MorphoLiquidator newLiquidator = new MorphoLiquidator(MORPHO);
+
+        // Verify we are admin
+        assertTrue(
+            newLiquidator.hasRole(newLiquidator.DEFAULT_ADMIN_ROLE(), address(this)),
+            "Should be admin"
+        );
+
+        // But we don't have LIQUIDATOR role
+        assertFalse(
+            newLiquidator.hasRole(newLiquidator.LIQUIDATOR(), address(this)),
+            "Should not have LIQUIDATOR role"
+        );
+
+        morpho.accrueInterest(marketParams);
+        _makeUndercollateralized();
+
+        deal(marketParams.loanToken, address(this), 1_000_000e6);
+        IERC20(marketParams.loanToken).approve(
+            address(newLiquidator),
+            type(uint256).max
+        );
+
+        // Should revert even though we're admin
+        vm.expectRevert();
+        newLiquidator.liquidate(marketParams, BORROWER, 1000e6, 0);
+    }
+
+    // =========================================================================
+    //                          RECOVER FUNCTION TESTS
+    // =========================================================================
+
+    function testRecover_AdminCanRecoverTokens() public {
+        // Send some tokens to the liquidator contract
+        uint256 amountToRecover = 1000e6;
+        deal(VB_USDC, address(liquidator), amountToRecover);
+
+        uint256 liquidatorBalanceBefore = IERC20(VB_USDC).balanceOf(
+            address(liquidator)
+        );
+        uint256 adminBalanceBefore = IERC20(VB_USDC).balanceOf(address(this));
+
+        assertEq(
+            liquidatorBalanceBefore,
+            amountToRecover,
+            "Liquidator should have tokens"
+        );
+
+        // Admin recovers the tokens
+        liquidator.recover(VB_USDC);
+
+        uint256 liquidatorBalanceAfter = IERC20(VB_USDC).balanceOf(
+            address(liquidator)
+        );
+        uint256 adminBalanceAfter = IERC20(VB_USDC).balanceOf(address(this));
+
+        assertEq(
+            liquidatorBalanceAfter,
+            0,
+            "Liquidator should have no tokens after recover"
+        );
+        assertEq(
+            adminBalanceAfter,
+            adminBalanceBefore + amountToRecover,
+            "Admin should have received tokens"
+        );
+    }
+
+    function testRecover_NonAdminCannotRecover() public {
+        address unauthorized = address(0xBAD);
+
+        // Send tokens to liquidator
+        deal(VB_USDC, address(liquidator), 1000e6);
+
+        vm.prank(unauthorized);
+        vm.expectRevert();
+        liquidator.recover(VB_USDC);
+    }
+
+    function testRecover_LiquidatorRoleCannotRecover() public {
+        address liquidatorRole = address(0xCAFE);
+
+        // Grant LIQUIDATOR role but NOT admin
+        liquidator.grantRole(liquidator.LIQUIDATOR(), liquidatorRole);
+
+        // Send tokens to liquidator contract
+        deal(VB_USDC, address(liquidator), 1000e6);
+
+        vm.prank(liquidatorRole);
+        vm.expectRevert();
+        liquidator.recover(VB_USDC);
+    }
+
+    function testRecover_CanRecoverCollateralToken() public {
+        // Send collateral tokens to the liquidator contract
+        uint256 amountToRecover = 1000e18;
+        deal(WS_RUSD, address(liquidator), amountToRecover);
+
+        uint256 adminBalanceBefore = IERC20(WS_RUSD).balanceOf(address(this));
+
+        liquidator.recover(WS_RUSD);
+
+        uint256 adminBalanceAfter = IERC20(WS_RUSD).balanceOf(address(this));
+
+        assertEq(
+            adminBalanceAfter,
+            adminBalanceBefore + amountToRecover,
+            "Admin should have received collateral tokens"
+        );
+    }
+
+    function testRecover_ZeroBalanceDoesNotRevert() public {
+        // Ensure liquidator has no tokens
+        uint256 balance = IERC20(VB_USDC).balanceOf(address(liquidator));
+        assertEq(balance, 0, "Should have no tokens initially");
+
+        // Recover should not revert even with zero balance
+        liquidator.recover(VB_USDC);
+
+        // Still zero
+        assertEq(
+            IERC20(VB_USDC).balanceOf(address(liquidator)),
+            0,
+            "Should still have no tokens"
+        );
+    }
+
+    function testRecover_MultipleTokenTypes() public {
+        // Send both loan and collateral tokens
+        uint256 loanAmount = 500e6;
+        uint256 collateralAmount = 500e18;
+
+        deal(VB_USDC, address(liquidator), loanAmount);
+        deal(WS_RUSD, address(liquidator), collateralAmount);
+
+        uint256 adminLoanBefore = IERC20(VB_USDC).balanceOf(address(this));
+        uint256 adminCollateralBefore = IERC20(WS_RUSD).balanceOf(address(this));
+
+        // Recover loan token
+        liquidator.recover(VB_USDC);
+
+        // Recover collateral token
+        liquidator.recover(WS_RUSD);
+
+        assertEq(
+            IERC20(VB_USDC).balanceOf(address(this)),
+            adminLoanBefore + loanAmount,
+            "Should have recovered loan tokens"
+        );
+        assertEq(
+            IERC20(WS_RUSD).balanceOf(address(this)),
+            adminCollateralBefore + collateralAmount,
+            "Should have recovered collateral tokens"
+        );
+        assertEq(
+            IERC20(VB_USDC).balanceOf(address(liquidator)),
+            0,
+            "Liquidator should have no loan tokens"
+        );
+        assertEq(
+            IERC20(WS_RUSD).balanceOf(address(liquidator)),
+            0,
+            "Liquidator should have no collateral tokens"
+        );
     }
 }
