@@ -6,7 +6,7 @@ import {MorphoLiquidator} from "../src/MorphoLiquidator.sol";
 
 address constant MORPHO = 0x0000000000000000000000000000000000000000;
 
-contract CounterScript is Script {
+contract MorphoLiquidatorScript is Script {
     MorphoLiquidator public liquidator;
 
     function setUp() public {}
