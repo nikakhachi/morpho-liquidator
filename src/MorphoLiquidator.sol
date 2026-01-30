@@ -4,22 +4,7 @@ pragma solidity ^0.8.13;
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IMorpho, MarketParams, IOracle} from "./IMorpho.sol";
 
-/// @title MorphoLiquidator
-/// @notice A helper contract for liquidating undercollateralized positions on Morpho Blue
-/// @dev Simplifies the liquidation process by accepting debt amount in assets instead of shares
 contract MorphoLiquidator {
-    error ZeroAmount();
-    error SlippageExceeded();
-    error TransferFailed();
-
-    event Liquidation(
-        bytes32 indexed marketId,
-        address indexed borrower,
-        address indexed liquidator,
-        uint256 repaidAssets,
-        uint256 seizedCollateral
-    );
-
     IMorpho public immutable MORPHO;
 
     constructor(address _morpho) {
@@ -27,20 +12,18 @@ contract MorphoLiquidator {
     }
 
     /// @notice Liquidate an undercollateralized position
+    /// @notice The liquidator must approve the debt token amount to the liquidator contract beforehand
     /// @param _marketParams The market parameters identifying the Morpho market
     /// @param _borrower The address of the borrower to liquidate
-    /// @param _debtToRepay The amount of debt (in loan token assets) to repay
+    /// @param _debtToRepay The amount of debt to repay
     /// @param _minCollateralOut Minimum collateral to receive (slippage protection)
     /// @return seizedCollateral The amount of collateral seized
-    /// @return repaidAssets The amount of loan assets actually repaid
     function liquidate(
         MarketParams memory _marketParams,
         address _borrower,
         uint256 _debtToRepay,
         uint256 _minCollateralOut
-    ) external returns (uint256 seizedCollateral, uint256 repaidAssets) {
-        if (_debtToRepay == 0) revert ZeroAmount();
-
+    ) external returns (uint256 seizedCollateral) {
         (
             ,
             ,
@@ -67,20 +50,10 @@ contract MorphoLiquidator {
             ""
         );
 
-        if (seizedCollateral < _minCollateralOut) revert SlippageExceeded();
+        require(seizedCollateral >= _minCollateralOut, "Slippage exceeded");
 
         IERC20(_marketParams.collateralToken).transfer(
             msg.sender,
-            seizedCollateral
-        );
-
-        repaidAssets = _debtToRepay;
-
-        emit Liquidation(
-            _marketId(_marketParams),
-            _borrower,
-            msg.sender,
-            _debtToRepay,
             seizedCollateral
         );
     }
