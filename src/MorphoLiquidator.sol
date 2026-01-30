@@ -77,20 +77,19 @@ contract MorphoLiquidator {
 
         uint256 lif = 1e18 + _liquidationPenalty;
 
+        // Max debt based on collateral value
         uint256 maxDebtAssets = (uint256(borrowerCollateral) *
             IOracle(_marketParams.oracle).price() *
             1e18) / (lif * 1e36);
 
-        uint256 sharesToLiquidate = (((maxDebtAssets *
-            uint256(totalBorrowShares)) / uint256(totalBorrowAssets)) * 999) /
-            1000;
+        // Cap at borrower's actual debt (converted to assets)
+        uint256 borrowerDebtAssets = (uint256(borrowerDebtShares) *
+            uint256(totalBorrowAssets)) / uint256(totalBorrowShares);
 
-        if (sharesToLiquidate > borrowerDebtShares)
-            sharesToLiquidate = borrowerDebtShares;
+        if (maxDebtAssets > borrowerDebtAssets)
+            maxDebtAssets = borrowerDebtAssets;
 
-        debtAssetsToLiquidate =
-            (sharesToLiquidate * uint256(totalBorrowAssets)) /
-            uint256(totalBorrowShares);
+        debtAssetsToLiquidate = (maxDebtAssets * 999) / 1000;
     }
 
     function _positionData(
